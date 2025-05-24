@@ -1,138 +1,138 @@
 #include <mpi.h>
 #include <chrono>
-#include <format>
 #include <iostream>
+#include <vector>
+#include <iomanip>
+#include <cstdlib>
+#include <ctime>
 
-#define COUNT_TIMES 10
+#define ITERATIONS 10
 
 using namespace std;
 using namespace chrono;
 
 class Matrix {
-    unsigned int _rows;
-    unsigned int _cols;
-    vector<vector<float> > _data;
+    unsigned int rows, cols;
+    vector<vector<float>> elements;
+
 public:
     Matrix();
-    Matrix(unsigned int rows, unsigned int cols);
-    Matrix(unsigned int rows, unsigned int cols, const float lower, const float upper);
+    Matrix(unsigned int r, unsigned int c);
+    Matrix(unsigned int r, unsigned int c, float minVal, float maxVal);
     Matrix operator*(const Matrix& other) const;
 
-    const vector<vector<float> >& Data() const { return _data; }
-    vector<vector<float> >& Data() { return _data; }
+    const vector<vector<float>>& data() const { return elements; }
+    vector<vector<float>>& data() { return elements; }
 
-    friend ostream& operator<<(ostream& os, const Matrix& matrix) {
-        for (unsigned int i = 0; i < matrix._rows; i++) {
-            for (unsigned int j = 0; j < matrix._cols; j++) {
-                os << fixed << setprecision(4) << matrix._data[i][j] << ' ';
+    friend ostream& operator<<(ostream& out, const Matrix& mat) {
+        for (unsigned int i = 0; i < mat.rows; ++i) {
+            for (unsigned int j = 0; j < mat.cols; ++j) {
+                out << fixed << setprecision(4) << mat.elements[i][j] << ' ';
             }
-            os << '\n';
+            out << '\n';
         }
-        return os;
+        return out;
     }
-
 };
 
-Matrix::Matrix() : _rows(0), _cols(0) {
-    _data.resize(_rows, vector<float>(_cols, 0.0));
+Matrix::Matrix() : rows(0), cols(0) {
+    elements.resize(rows, vector<float>(cols, 0.0));
 }
 
-Matrix::Matrix(unsigned int rows, unsigned int cols) : _rows(rows), _cols(cols) {
-    _data.resize(_rows, vector<float>(_cols, 0.0));
+Matrix::Matrix(unsigned int r, unsigned int c) : rows(r), cols(c) {
+    elements.resize(rows, vector<float>(cols, 0.0));
 }
 
-Matrix::Matrix(unsigned int rows, unsigned int cols, const float lower, const float upper) {
-    _rows = rows;
-    _cols = cols;
-    _data.resize(_rows, vector<float>(_cols));
+Matrix::Matrix(unsigned int r, unsigned int c, float minVal, float maxVal) : rows(r), cols(c) {
+    elements.resize(rows, vector<float>(cols));
+    srand(static_cast<unsigned>(time(nullptr)) + r + c);
 
-    srand(static_cast<unsigned>(time(nullptr)));
-
-    for (unsigned int i = 0; i < _rows; ++i) {
-        for (unsigned int j = 0; j < _cols; ++j) {
-            _data[i][j] = lower + static_cast<float>(rand()) / (static_cast<float>(RAND_MAX) / (upper - lower));
+    for (unsigned int i = 0; i < rows; ++i) {
+        for (unsigned int j = 0; j < cols; ++j) {
+            elements[i][j] = minVal + static_cast<float>(rand()) / (static_cast<float>(RAND_MAX) / (maxVal - minVal));
         }
     }
 }
 
 Matrix Matrix::operator*(const Matrix& other) const {
-    int rank, size;
+    int rank, totalProcs;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &size);
+    MPI_Comm_size(MPI_COMM_WORLD, &totalProcs);
 
-    int rowsA, colsA, rowsB, colsB;
+    int aRows, aCols, bRows, bCols;
     if (rank == 0) {
-        rowsA = _rows;
-        colsA = _cols;
-        rowsB = other._rows;
-        colsB = other._cols;
+        aRows = rows;
+        aCols = cols;
+        bRows = other.rows;
+        bCols = other.cols;
     }
-    MPI_Bcast(&rowsA, 1, MPI_INT, 0, MPI_COMM_WORLD);
-    MPI_Bcast(&colsA, 1, MPI_INT, 0, MPI_COMM_WORLD);
-    MPI_Bcast(&rowsB, 1, MPI_INT, 0, MPI_COMM_WORLD);
-    MPI_Bcast(&colsB, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
-    if (colsA != rowsB) {
-        if (rank == 0) cerr << "Dimension mismatch for multiplication" << endl;
+    MPI_Bcast(&aRows, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&aCols, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&bRows, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&bCols, 1, MPI_INT, 0, MPI_COMM_WORLD);
+
+    if (aCols != bRows) {
+        if (rank == 0) cerr << "Incompatible matrix dimensions" << endl;
         return Matrix();
     }
 
-    int baseRows = rowsA / size;
-    int rem = rowsA % size;
-    vector<int> counts(size), displs(size);
-    for (int i = 0; i < size; ++i) {
-        int chunk = baseRows + (i < rem ? 1 : 0);
-        counts[i] = chunk * colsA;
-        displs[i] = (i == 0 ? 0 : displs[i - 1] + counts[i - 1]);
+    int base = aRows / totalProcs, remain = aRows % totalProcs;
+    vector<int> sendCounts(totalProcs), displacements(totalProcs);
+    for (int i = 0; i < totalProcs; ++i) {
+        int slice = base + (i < remain ? 1 : 0);
+        sendCounts[i] = slice * aCols;
+        displacements[i] = (i == 0 ? 0 : displacements[i - 1] + sendCounts[i - 1]);
     }
-    int localRows = counts[rank] / colsA;
+    int localRows = sendCounts[rank] / aCols;
 
     vector<float> flatA;
     if (rank == 0) {
-        flatA.resize(rowsA * colsA);
-        for (int i = 0; i < rowsA; ++i)
-            copy(_data[i].begin(), _data[i].end(), flatA.begin() + i * colsA);
+        flatA.resize(aRows * aCols);
+        for (int i = 0; i < aRows; ++i)
+            copy(elements[i].begin(), elements[i].end(), flatA.begin() + i * aCols);
     }
-    vector<float> localA(localRows * colsA);
-    MPI_Scatterv(flatA.data(), counts.data(), displs.data(), MPI_FLOAT,
-        localA.data(), counts[rank], MPI_FLOAT, 0, MPI_COMM_WORLD);
 
-    vector<float> flatB(rowsB * colsB);
+    vector<float> subA(localRows * aCols);
+    MPI_Scatterv(flatA.data(), sendCounts.data(), displacements.data(), MPI_FLOAT,
+                 subA.data(), sendCounts[rank], MPI_FLOAT, 0, MPI_COMM_WORLD);
+
+    vector<float> flatB(bRows * bCols);
     if (rank == 0) {
-        for (int i = 0; i < rowsB; ++i)
-            copy(other._data[i].begin(), other._data[i].end(), flatB.begin() + i * colsB);
+        for (int i = 0; i < bRows; ++i)
+            copy(other.elements[i].begin(), other.elements[i].end(), flatB.begin() + i * bCols);
     }
-    MPI_Bcast(flatB.data(), rowsB * colsB, MPI_FLOAT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(flatB.data(), bRows * bCols, MPI_FLOAT, 0, MPI_COMM_WORLD);
 
-    vector<float> localC(localRows * colsB, 0.0f);
+    vector<float> localResult(localRows * bCols, 0.0f);
     for (int i = 0; i < localRows; ++i) {
-        for (int j = 0; j < colsB; ++j) {
-            float sum = 0.0f;
-            for (int k = 0; k < colsA; ++k)
-                sum += localA[i * colsA + k] * flatB[k * colsB + j];
-            localC[i * colsB + j] = sum;
+        for (int j = 0; j < bCols; ++j) {
+            float val = 0.0f;
+            for (int k = 0; k < aCols; ++k)
+                val += subA[i * aCols + k] * flatB[k * bCols + j];
+            localResult[i * bCols + j] = val;
         }
     }
 
-    vector<int> recvCounts(size), recvDispls(size);
-    for (int i = 0; i < size; ++i) {
-        int rows = counts[i] / colsA;
-        recvCounts[i] = rows * colsB;
+    vector<int> recvCounts(totalProcs), recvDispls(totalProcs);
+    for (int i = 0; i < totalProcs; ++i) {
+        int r = sendCounts[i] / aCols;
+        recvCounts[i] = r * bCols;
         recvDispls[i] = (i == 0 ? 0 : recvDispls[i - 1] + recvCounts[i - 1]);
     }
-    vector<float> flatResult;
-    if (rank == 0) flatResult.resize(rowsA * colsB);
-    MPI_Gatherv(localC.data(), recvCounts[rank], MPI_FLOAT,
-        flatResult.data(), recvCounts.data(), recvDispls.data(), MPI_FLOAT,
-        0, MPI_COMM_WORLD);
+
+    vector<float> finalFlat;
+    if (rank == 0) finalFlat.resize(aRows * bCols);
+
+    MPI_Gatherv(localResult.data(), recvCounts[rank], MPI_FLOAT,
+                finalFlat.data(), recvCounts.data(), recvDispls.data(), MPI_FLOAT,
+                0, MPI_COMM_WORLD);
 
     if (rank == 0) {
-        Matrix result(rowsA, colsB);
-        for (int i = 0; i < rowsA; ++i)
-            copy(flatResult.begin() + i * colsB,
-                flatResult.begin() + (i + 1) * colsB,
-                result._data[i].begin());
-        return result;
+        Matrix output(aRows, bCols);
+        for (int i = 0; i < aRows; ++i)
+            copy(finalFlat.begin() + i * bCols, finalFlat.begin() + (i + 1) * bCols, output.elements[i].begin());
+        return output;
     }
     return Matrix();
 }
@@ -143,38 +143,35 @@ int main(int argc, char** argv) {
     int rank;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-    for (unsigned int i = 100; i <= 1000; i += 100) {
-        double total_duration = 0.0;
+    for (unsigned int dim = 100; dim <= 1000; dim += 100) {
+        double cumulative_time = 0.0;
 
-        for (unsigned int j = 0; j < COUNT_TIMES; ++j) {
-            int matrix_size = i;
-            MPI_Bcast(&matrix_size, 1, MPI_INT, 0, MPI_COMM_WORLD);
+        for (unsigned int test = 0; test < ITERATIONS; ++test) {
+            int size = dim;
+            MPI_Bcast(&size, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
-            Matrix a(matrix_size, matrix_size);
-            Matrix b(matrix_size, matrix_size);
-
+            Matrix A(size, size), B(size, size);
             if (rank == 0) {
-                a = Matrix(matrix_size, matrix_size, 2.0f, 100.0f);
-                b = Matrix(matrix_size, matrix_size, 2.0f, 100.0f);
+                A = Matrix(size, size, 1.0f, 99.0f);
+                B = Matrix(size, size, 1.0f, 99.0f);
             }
 
             MPI_Barrier(MPI_COMM_WORLD);
-            auto start_time = high_resolution_clock::now();
-            Matrix result = a * b;
-            auto end_time = high_resolution_clock::now();
+            auto t_start = high_resolution_clock::now();
+            Matrix C = A * B;
+            auto t_end = high_resolution_clock::now();
 
             if (rank == 0) {
-                total_duration += duration_cast<microseconds>(end_time - start_time).count() / 1e6;
+                cumulative_time += duration_cast<microseconds>(t_end - t_start).count() / 1e6;
             }
         }
 
         if (rank == 0) {
-            double avg_duration = total_duration / COUNT_TIMES;
-            cout << i << " " << avg_duration << endl;
+            double avg_time = cumulative_time / ITERATIONS;
+            cout << dim << " " << avg_time << endl;
         }
     }
 
     MPI_Finalize();
     return 0;
 }
-
