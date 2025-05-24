@@ -23,32 +23,41 @@ __global__ void matrixMulKernel(float* A, float* B, float* C, int A_rows, int A_
 }
 
 void cudaMatrixMultiply(const std::vector<float>& A,
-    const std::vector<float>& B,
-    std::vector<float>& C,
-    int A_rows, int A_cols, int B_cols) {
-    float* d_A, * d_B, * d_C;
+                        const std::vector<float>& B,
+                        std::vector<float>& C,
+                        int A_rows, int A_cols, int B_cols,
+                        int blockSize = 32) 
+{
+    float* d_A = nullptr;
+    float* d_B = nullptr;
+    float* d_C = nullptr;
 
     size_t size_A = A_rows * A_cols * sizeof(float);
     size_t size_B = A_cols * B_cols * sizeof(float);
     size_t size_C = A_rows * B_cols * sizeof(float);
 
     cudaError_t err;
+
     err = cudaMalloc(&d_A, size_A);
     HANDLE_CUDA_ERROR(err);
+
     err = cudaMalloc(&d_B, size_B);
     HANDLE_CUDA_ERROR(err);
+
     err = cudaMalloc(&d_C, size_C);
     HANDLE_CUDA_ERROR(err);
 
     err = cudaMemcpy(d_A, A.data(), size_A, cudaMemcpyHostToDevice);
     HANDLE_CUDA_ERROR(err);
+
     err = cudaMemcpy(d_B, B.data(), size_B, cudaMemcpyHostToDevice);
     HANDLE_CUDA_ERROR(err);
 
-    dim3 threadsPerBlock(32, 32);
-    dim3 numBlocks((B_cols + 31) / 32, (A_rows + 31) / 32);
+    dim3 threadsPerBlock(blockSize, blockSize);
+    dim3 numBlocks((B_cols + blockSize - 1) / blockSize, (A_rows + blockSize - 1) / blockSize);
 
-    matrixMulKernel << <numBlocks, threadsPerBlock >> > (d_A, d_B, d_C, A_rows, A_cols, B_cols);
+    matrixMulKernel<<<numBlocks, threadsPerBlock>>>(d_A, d_B, d_C, A_rows, A_cols, B_cols);
+
     err = cudaGetLastError();
     HANDLE_CUDA_ERROR(err);
 
