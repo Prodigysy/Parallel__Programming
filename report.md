@@ -73,7 +73,7 @@
 | 900    | 8,1986 с         | 1,5237 с  | 0,90531 с  |
 | 1000   | 10,8315 с        | 2,0298 с  | 1,2247 с   |
 
-
+![График](https://github.com/Prodigysy/Parallel__Programming/blob/lab_2/GRAFIC.png)
 
 
 ## Вывод
