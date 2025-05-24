@@ -19,7 +19,7 @@ for file, label in zip(files, labels):
 
 plt.xlabel('Размер матрицы')
 plt.ylabel('Время в секундах')
-plt.title('График работы на Суперкомпьютере "Сергей Королёв"')
+plt.title('График работы на Суперкомпьютере')
 plt.legend()
 plt.grid(True)
 plt.tight_layout()
